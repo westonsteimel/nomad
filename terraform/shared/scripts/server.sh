@@ -53,7 +53,7 @@ if [[ `wget -S --spider $NOMAD_BINARY  2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
 fi
 
 sed -i "s/SERVER_COUNT/$SERVER_COUNT/g" $CONFIGDIR/nomad.hcl
-sed -i "s/NOMAD_RETRY_JOIN/$RETRY_JOIN/g" $CONFIGDIR/nomad.hcl
+sed -i "s/RETRY_JOIN/$NOMAD_RETRY_JOIN/g" $CONFIGDIR/nomad.hcl
 sudo cp $CONFIGDIR/nomad.hcl $NOMADCONFIGDIR
 sudo cp $CONFIGDIR/nomad.service /etc/systemd/system/nomad.service
 
