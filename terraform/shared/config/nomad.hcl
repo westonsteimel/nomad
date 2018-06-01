@@ -5,10 +5,7 @@ bind_addr = "0.0.0.0"
 server {
   enabled = true
   bootstrap_expect = SERVER_COUNT
-}
-
-consul {
-  address = "127.0.0.1:8500"
+  retry_join = ["RETRY_JOIN"]
 }
 
 vault {

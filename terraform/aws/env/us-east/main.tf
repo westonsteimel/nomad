@@ -32,6 +32,11 @@ variable "retry_join" {
   default     = "provider=aws tag_key=ConsulAutoJoin tag_value=auto-join"
 }
 
+variable "nomad_retry_join" {
+  description = "Used by Nomad to automatically form a cluster."
+  default     = "provider=aws tag_key=NomadAutoJoin tag_value=nomad-auto-join"
+}
+
 variable "nomad_binary" {
   description = "Used to replace the machine image installed Nomad binary."
   default     = "none"
@@ -53,6 +58,7 @@ module "hashistack" {
   client_count  = "${var.client_count}"
   retry_join    = "${var.retry_join}"
   nomad_binary  = "${var.nomad_binary}"
+  nomad_retry_join = "${var.nomad_retry_join}"
 }
 
 output "IP_Addresses" {

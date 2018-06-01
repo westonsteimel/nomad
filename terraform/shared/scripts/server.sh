@@ -20,7 +20,8 @@ DOCKER_BRIDGE_IP_ADDRESS=(`ifconfig docker0 2>/dev/null|awk '/inet addr:/ {print
 CLOUD=$1
 SERVER_COUNT=$2
 RETRY_JOIN=$3
-NOMAD_BINARY=$4
+NOMAD_RETRY_JOIN=$4
+NOMAD_BINARY=$5
 
 # Consul
 sed -i "s/IP_ADDRESS/$IP_ADDRESS/g" $CONFIGDIR/consul.json
@@ -52,6 +53,7 @@ if [[ `wget -S --spider $NOMAD_BINARY  2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
 fi
 
 sed -i "s/SERVER_COUNT/$SERVER_COUNT/g" $CONFIGDIR/nomad.hcl
+sed -i "s/NOMAD_RETRY_JOIN/$RETRY_JOIN/g" $CONFIGDIR/nomad.hcl
 sudo cp $CONFIGDIR/nomad.hcl $NOMADCONFIGDIR
 sudo cp $CONFIGDIR/nomad.service /etc/systemd/system/nomad.service
 

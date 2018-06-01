@@ -6,6 +6,7 @@ variable "key_name" {}
 variable "server_count" {}
 variable "client_count" {}
 variable "retry_join" {}
+variable "nomad_retry_join" {}
 variable "nomad_binary" {}
 
 data "aws_vpc" "default" {
@@ -85,6 +86,7 @@ data "template_file" "user_data_server" {
     server_count = "${var.server_count}"
     region       = "${var.region}"
     retry_join   = "${var.retry_join}"
+    nomad_retry_join = "${var.nomad_retry_join}"
     nomad_binary = "${var.nomad_binary}"
   }
 }
@@ -110,6 +112,7 @@ resource "aws_instance" "server" {
   tags {
     Name           = "${var.name}-server-${count.index}"
     ConsulAutoJoin = "auto-join"
+    NomadAutoJoin = "nomad-auto-join"
   }
 
   user_data            = "${data.template_file.user_data_server.rendered}"
