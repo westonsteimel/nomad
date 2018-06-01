@@ -97,6 +97,7 @@ data "template_file" "user_data_client" {
   vars {
     region     = "${var.region}"
     retry_join = "${var.retry_join}"
+    nomad_retry_join = "${var.nomad_retry_join}"
     nomad_binary = "${var.nomad_binary}"
   }
 }
@@ -131,6 +132,7 @@ resource "aws_instance" "client" {
   tags {
     Name           = "${var.name}-client-${count.index}"
     ConsulAutoJoin = "auto-join"
+    NomadAutoJoin = "nomad-auto-join"
   }
 
   ebs_block_device =  {

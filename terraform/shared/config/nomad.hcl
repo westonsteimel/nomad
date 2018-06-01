@@ -5,8 +5,14 @@ bind_addr = "0.0.0.0"
 server {
   enabled = true
   bootstrap_expect = SERVER_COUNT
-  retry_join = ["RETRY_JOIN"]
+  server_join {
+    retry_join = ["RETRY_JOIN"]
+    retry_max = 3
+    retry_interval = "15s"
+  }
 }
+
+
 
 vault {
   enabled = false

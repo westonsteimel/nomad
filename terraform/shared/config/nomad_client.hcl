@@ -8,11 +8,14 @@ client {
     "driver.raw_exec.enable" = "1"
     "docker.privileged.enabled" = "true"
   }
+  server_join {
+    retry_join = ["RETRY_JOIN"]
+    retry_max = 3
+    retry_interval = "15s"
+  }
 }
 
-consul {
-  address = "127.0.0.1:8500"
-}
+
 
 vault {
   enabled = true

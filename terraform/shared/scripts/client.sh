@@ -18,11 +18,13 @@ IP_ADDRESS="$(/sbin/ifconfig eth0 | grep 'inet addr:' | cut -d: -f2 | awk '{ pri
 DOCKER_BRIDGE_IP_ADDRESS=(`ifconfig docker0 2>/dev/null|awk '/inet addr:/ {print $2}'|sed 's/addr://'`)
 CLOUD=$1
 RETRY_JOIN=$2
-NOMAD_BINARY=$3
+NOMAD_RETRY_JOIN=$3
+NOMAD_BINARY=$4
 
 # Consul
 sed -i "s/IP_ADDRESS/$IP_ADDRESS/g" $CONFIGDIR/consul_client.json
 sed -i "s/RETRY_JOIN/$RETRY_JOIN/g" $CONFIGDIR/consul_client.json
+sed -i "s/RETRY_JOIN/$NOMAD_RETRY_JOIN/g" $CONFIGDIR/nomad_client.hcl
 sudo cp $CONFIGDIR/consul_client.json $CONSULCONFIGDIR/consul.json
 sudo cp $CONFIGDIR/consul_$CLOUD.service /etc/systemd/system/consul.service
 
