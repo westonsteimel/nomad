@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
+
 	memdb "github.com/hashicorp/go-memdb"
 	"github.com/hashicorp/nomad/helper"
 	"github.com/hashicorp/nomad/helper/uuid"
@@ -1526,6 +1528,165 @@ func TestSystemSched_QueuedAllocsMultTG(t *testing.T) {
 	if qa["web"] != 0 || qa["web2"] != 0 {
 		t.Fatalf("bad queued allocations %#v", qa)
 	}
+
+	h.AssertEvalStatus(t, structs.EvalStatusComplete)
+}
+
+func TestSystemSched_Preemption(t *testing.T) {
+	h := NewHarness(t)
+
+	// Create nodes
+	var nodes []*structs.Node
+	for i := 0; i < 2; i++ {
+		node := mock.Node()
+		node.Resources = &structs.Resources{
+			CPU:      2048,
+			MemoryMB: 4096,
+			DiskMB:   20 * 1024,
+			IOPS:     150,
+			Networks: []*structs.NetworkResource{
+				{
+					Device: "eth0",
+					CIDR:   "192.168.0.100/32",
+					MBits:  1000,
+				},
+			},
+		}
+		noErr(t, h.State.UpsertNode(h.NextIndex(), node))
+		nodes = append(nodes, node)
+	}
+
+	// Create a couple of low priority batch jobs and allocations for them
+	job1 := mock.BatchJob()
+	job1.Type = structs.JobTypeBatch
+	job1.Priority = 20
+	job1.TaskGroups[0].Tasks[0].Resources = &structs.Resources{
+		CPU:      1024,
+		MemoryMB: 2048,
+		Networks: []*structs.NetworkResource{
+			{
+				MBits: 400,
+			},
+		},
+	}
+
+	alloc1 := mock.Alloc()
+	alloc1.Job = job1
+	alloc1.JobID = job1.ID
+	alloc1.NodeID = nodes[0].ID
+	alloc1.Name = "my-job[0]"
+	alloc1.TaskGroup = job1.TaskGroups[0].Name
+	alloc1.Resources = &structs.Resources{
+		CPU:      1024,
+		MemoryMB: 2048,
+		DiskMB:   10 * 1024,
+		Networks: []*structs.NetworkResource{
+			{
+				MBits: 400,
+			},
+		},
+	}
+	noErr(t, h.State.UpsertJob(h.NextIndex(), job1))
+
+	job2 := mock.Job()
+	job2.Type = structs.JobTypeBatch
+	job2.Priority = 40
+	job2.TaskGroups[0].Tasks[0].Resources = &structs.Resources{
+		CPU:      1024,
+		MemoryMB: 2048,
+		Networks: []*structs.NetworkResource{
+			{
+				MBits: 400,
+			},
+		},
+	}
+
+	alloc2 := mock.Alloc()
+	alloc2.Job = job1
+	alloc2.JobID = job1.ID
+	alloc2.NodeID = nodes[0].ID
+	alloc2.Name = "my-job[0]"
+	alloc2.TaskGroup = job1.TaskGroups[0].Name
+	alloc2.Resources = &structs.Resources{
+		CPU:      1024,
+		MemoryMB: 2048,
+		DiskMB:   5 * 1024,
+		Networks: []*structs.NetworkResource{
+			{
+				MBits: 400,
+			},
+		},
+	}
+	noErr(t, h.State.UpsertAllocs(h.NextIndex(), []*structs.Allocation{alloc1, alloc2}))
+
+	// Create a system job such that it would need to preempt both allocs to succeed
+	job := mock.SystemJob()
+	job.TaskGroups[0].Tasks[0].Resources = &structs.Resources{
+		CPU:      1948,
+		MemoryMB: 256,
+		Networks: []*structs.NetworkResource{
+			{
+				MBits:        800,
+				DynamicPorts: []structs.Port{{Label: "http"}},
+			},
+		},
+	}
+	noErr(t, h.State.UpsertJob(h.NextIndex(), job))
+
+	// Create a mock evaluation to register the job
+	eval := &structs.Evaluation{
+		Namespace:   structs.DefaultNamespace,
+		ID:          uuid.Generate(),
+		Priority:    job.Priority,
+		TriggeredBy: structs.EvalTriggerJobRegister,
+		JobID:       job.ID,
+		Status:      structs.EvalStatusPending,
+	}
+	noErr(t, h.State.UpsertEvals(h.NextIndex(), []*structs.Evaluation{eval}))
+
+	// Process the evaluation
+	err := h.Process(NewSystemScheduler, eval)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Ensure a single plan
+	if len(h.Plans) != 1 {
+		t.Fatalf("bad: %#v", h.Plans)
+	}
+	plan := h.Plans[0]
+
+	// Ensure the plan doesn't have annotations.
+	if plan.Annotations != nil {
+		t.Fatalf("expected no annotations")
+	}
+
+	// Ensure the plan allocated
+	var planned []*structs.Allocation
+	fmt.Println("Planned allocs ")
+	for _, allocList := range plan.NodeAllocation {
+		planned = append(planned, allocList...)
+		for _, alloc := range allocList {
+			fmt.Println(alloc.ID, alloc.Job.ID, alloc.NodeID)
+		}
+	}
+
+	fmt.Println("Planned evictions ", len(plan.NodeUpdate))
+	for _, evicts := range plan.NodeUpdate {
+		for _, evictedAlloc := range evicts {
+			fmt.Println(evictedAlloc.ID, evictedAlloc.NodeID, evictedAlloc.DesiredStatus, evictedAlloc.DesiredDescription)
+		}
+	}
+
+	// Lookup the allocations by JobID
+	/*ws := memdb.NewWatchSet()
+	out, err := h.State.AllocsByJob(ws, job.Namespace, job.ID, false)
+	noErr(t, err)
+
+	// Ensure all allocations placed
+	if len(out) != 10 {
+		t.Fatalf("bad: %#v", out)
+	}*/
 
 	h.AssertEvalStatus(t, structs.EvalStatusComplete)
 }

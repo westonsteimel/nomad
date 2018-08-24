@@ -195,6 +195,44 @@ func ScoreFit(node *Node, util *Resources) float64 {
 	return score
 }
 
+// ScoreFitWithPreemption is used to score the fit based on the Google work published here:
+// http://www.columbia.edu/~cs2035/courses/ieor4405.S13/datacenter_scheduling.ppt
+// This is equivalent to their BestFit v3. It also takes a list of resources that are preempted
+// to make room
+func ScoreFitWithPreemption(node *Node, util *Resources, preemptedResources *Resources) float64 {
+	// Determine the node availability
+	nodeCpu := float64(node.Resources.CPU)
+	if node.Reserved != nil {
+		nodeCpu -= float64(node.Reserved.CPU)
+	}
+	nodeMem := float64(node.Resources.MemoryMB)
+	if node.Reserved != nil {
+		nodeMem -= float64(node.Reserved.MemoryMB)
+	}
+
+	// Compute the free percentage
+	freePctCpu := 1 - (float64(util.CPU) / nodeCpu)
+	freePctRam := 1 - (float64(util.MemoryMB) / nodeMem)
+
+	// Total will be "maximized" the smaller the value is.
+	// At 100% utilization, the total is 2, while at 0% util it is 20.
+	total := math.Pow(10, freePctCpu) + math.Pow(10, freePctRam)
+
+	// Invert so that the "maximized" total represents a high-value
+	// score. Because the floor is 20, we simply use that as an anchor.
+	// This means at a perfect fit, we return 18 as the score.
+	score := 20.0 - total
+
+	// Bound the score, just in case
+	// If the score is over 18, that means we've overfit the node.
+	if score > 18.0 {
+		score = 18.0
+	} else if score < 0 {
+		score = 0
+	}
+	return score
+}
+
 func CopySliceConstraints(s []*Constraint) []*Constraint {
 	l := len(s)
 	if l == 0 {
