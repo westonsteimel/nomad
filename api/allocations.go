@@ -67,35 +67,37 @@ func (a *Allocations) GC(alloc *Allocation, q *QueryOptions) error {
 
 // Allocation is used for serialization of allocations.
 type Allocation struct {
-	ID                 string
-	Namespace          string
-	EvalID             string
-	Name               string
-	NodeID             string
-	JobID              string
-	Job                *Job
-	TaskGroup          string
-	Resources          *Resources
-	TaskResources      map[string]*Resources
-	Services           map[string]string
-	Metrics            *AllocationMetric
-	DesiredStatus      string
-	DesiredDescription string
-	DesiredTransition  DesiredTransition
-	ClientStatus       string
-	ClientDescription  string
-	TaskStates         map[string]*TaskState
-	DeploymentID       string
-	DeploymentStatus   *AllocDeploymentStatus
-	FollowupEvalID     string
-	PreviousAllocation string
-	NextAllocation     string
-	RescheduleTracker  *RescheduleTracker
-	CreateIndex        uint64
-	ModifyIndex        uint64
-	AllocModifyIndex   uint64
-	CreateTime         int64
-	ModifyTime         int64
+	ID                    string
+	Namespace             string
+	EvalID                string
+	Name                  string
+	NodeID                string
+	JobID                 string
+	Job                   *Job
+	TaskGroup             string
+	Resources             *Resources
+	TaskResources         map[string]*Resources
+	Services              map[string]string
+	Metrics               *AllocationMetric
+	DesiredStatus         string
+	DesiredDescription    string
+	DesiredTransition     DesiredTransition
+	ClientStatus          string
+	ClientDescription     string
+	TaskStates            map[string]*TaskState
+	DeploymentID          string
+	DeploymentStatus      *AllocDeploymentStatus
+	FollowupEvalID        string
+	PreviousAllocation    string
+	NextAllocation        string
+	RescheduleTracker     *RescheduleTracker
+	PreemptionTracker     *PreemptedAllocsTracker
+	PreemptedByAllocation string
+	CreateIndex           uint64
+	ModifyIndex           uint64
+	AllocModifyIndex      uint64
+	CreateTime            int64
+	ModifyTime            int64
 }
 
 // AllocationMetric is used to deserialize allocation metrics.
@@ -207,6 +209,17 @@ type RescheduleEvent struct {
 
 	// PrevNodeID is the node ID of the previous allocation
 	PrevNodeID string
+}
+
+// PreemptedAllocsTracker encapsulates allocs preempted and why they were preempted
+type PreemptedAllocsTracker struct {
+	PreemptedAllocInfos []*PreemptedAllocsInfo
+}
+
+// PreemptedAllocsTracker encapsulates a single preempted allocation ID and why it was preempted
+type PreemptedAllocsInfo struct {
+	AllocID          string
+	PreemptionReason string
 }
 
 // DesiredTransition is used to mark an allocation as having a desired state

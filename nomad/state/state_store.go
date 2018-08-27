@@ -217,6 +217,46 @@ func (s *StateStore) UpsertPlanResults(index uint64, results *structs.ApplyPlanR
 		}
 	}
 
+	// TODO(preetha) do a pass to group by jobid
+	// Prepare preempted allocs in the plan results for update
+	for _, preemptedAlloc := range results.NodePreemptions {
+		// Look up JobID
+		job, err := s.JobByID(nil, preemptedAlloc.Namespace, preemptedAlloc.JobID)
+		if err != nil {
+			return err
+		}
+		// Calculate the total resources of allocations. It is pulled out in the
+		// payload to avoid encoding something that can be computed, but should be
+		// denormalized prior to being inserted into MemDB.
+
+		if preemptedAlloc.Resources != nil {
+			continue
+		}
+
+		preemptedAlloc.Resources = new(structs.Resources)
+		for _, task := range preemptedAlloc.TaskResources {
+			preemptedAlloc.Resources.Add(task)
+		}
+
+		// Add the shared resources
+		preemptedAlloc.Resources.Add(preemptedAlloc.SharedResources)
+
+		structs.DenormalizeAllocationJobs(job, []*structs.Allocation{preemptedAlloc})
+
+		// Upsert the preempted allocations
+		if err := s.upsertAllocsImpl(index, []*structs.Allocation{preemptedAlloc}, txn); err != nil {
+			return err
+		}
+	}
+
+	// Upsert followup evals for allocs that were preempted
+
+	for _, eval := range results.PreemptionEvals {
+		if err := s.nestedUpsertEval(txn, index, eval); err != nil {
+			return err
+		}
+	}
+
 	txn.Commit()
 	return nil
 }

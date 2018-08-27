@@ -244,7 +244,7 @@ OUTER:
 
 			// Remove the last element containing the current placement from proposed allocs
 			current := proposed[:len(proposed)-1]
-			allocsToPreempt := GetPreemptibleAllocs(iter.priority, current, total)
+			allocsToPreempt := GetPreemptibleAllocs(iter.priority, current, total, option.Node)
 			if len(allocsToPreempt) > 0 {
 				option.PreemptedAllocs = allocsToPreempt
 			} else {

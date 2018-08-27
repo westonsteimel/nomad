@@ -176,12 +176,15 @@ func (idx *NetworkIndex) AssignNetwork(ask *NetworkResource) (out *NetworkResour
 		ipStr := ip.String()
 
 		// Check if we would exceed the bandwidth cap
-		availBandwidth := idx.AvailBandwidth[n.Device]
+		// TODO(preetha) Commented this out but need a better way to create offers
+		// where preemption could free up resources
+
+		/*availBandwidth := idx.AvailBandwidth[n.Device]
 		usedBandwidth := idx.UsedBandwidth[n.Device]
 		if usedBandwidth+ask.MBits > availBandwidth {
 			err = fmt.Errorf("bandwidth exceeded")
 			return
-		}
+		}*/
 
 		used := idx.UsedPorts[ipStr]
 

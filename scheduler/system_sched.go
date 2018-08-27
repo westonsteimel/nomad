@@ -331,15 +331,19 @@ func (s *SystemScheduler) computePlacements(place []allocTuple) error {
 				alloc.PreviousAllocation = missing.Alloc.ID
 			}
 
-			s.plan.AppendAlloc(alloc)
-
 			// If this placement involves preemption, set DesiredState to stop for those allocations
 			if option.PreemptedAllocs != nil {
-				// TODO(preetha) - figure out a better way to indicate preemptions
+				var preemptionInfo []*structs.PreemptedAllocsInfo
 				for _, stop := range option.PreemptedAllocs {
-					s.plan.AppendUpdate(stop, structs.AllocDesiredStatusStop, fmt.Sprintf("Preempted by alloc ID %v", alloc.ID), "")
+					s.plan.AppendPreemptedAlloc(stop, structs.AllocDesiredStatusEvict, alloc.ID)
+					// TODO(preetha) the stack should return more fine grained message for why this alloc was chosen for preemption
+					// that can be wired up here as a reason
+					preemptionInfo = append(preemptionInfo, &structs.PreemptedAllocsInfo{stop.ID, "Preempted"})
 				}
+				alloc.PreemptionTracker = &structs.PreemptedAllocsTracker{PreemptedAllocInfos: preemptionInfo}
 			}
+
+			s.plan.AppendAlloc(alloc)
 		} else {
 			// Lazy initialize the failed map
 			if s.failedTGAllocs == nil {

@@ -636,6 +636,15 @@ type ApplyPlanResultsRequest struct {
 	// processed many times, potentially making state updates, without the state of
 	// the evaluation itself being updated.
 	EvalID string
+
+	// NodePreemptions is a map from node id to a set of allocations from other
+	// lower priority jobs that are preempted. Preempted allocations are marked
+	// as stopped.
+	NodePreemptions []*Allocation
+
+	// PreemptionEvals is a slice of follow up evals for jobs whose allocations
+	// have been preempted to place allocs in this plan
+	PreemptionEvals []*Evaluation
 }
 
 // AllocUpdateRequest is used to submit changes to allocations, either
@@ -5926,6 +5935,42 @@ func (re *RescheduleEvent) Copy() *RescheduleEvent {
 	return copy
 }
 
+type PreemptedAllocsTracker struct {
+	PreemptedAllocInfos []*PreemptedAllocsInfo
+}
+
+func (pt *PreemptedAllocsTracker) Copy() *PreemptedAllocsTracker {
+	if pt == nil {
+		return nil
+	}
+	npt := &PreemptedAllocsTracker{}
+	*npt = *pt
+	allocInfos := make([]*PreemptedAllocsInfo, 0, len(pt.PreemptedAllocInfos))
+	for _, info := range pt.PreemptedAllocInfos {
+		allocInfos = append(allocInfos, info.Copy())
+	}
+	npt.PreemptedAllocInfos = allocInfos
+	return npt
+}
+
+type PreemptedAllocsInfo struct {
+	AllocID          string
+	PreemptionReason string
+}
+
+func NewPreemptedAllocsInfo(allocID string, reason string) *PreemptedAllocsInfo {
+	return &PreemptedAllocsInfo{AllocID: allocID, PreemptionReason: reason}
+}
+
+func (pi *PreemptedAllocsInfo) Copy() *PreemptedAllocsInfo {
+	if pi == nil {
+		return nil
+	}
+	copy := new(PreemptedAllocsInfo)
+	*copy = *pi
+	return copy
+}
+
 // DesiredTransition is used to mark an allocation as having a desired state
 // transition. This information can be used by the scheduler to make the
 // correct decision.
@@ -6078,6 +6123,14 @@ type Allocation struct {
 	// that can be rescheduled in the future
 	FollowupEvalID string
 
+	// PreemptedAllocationTracker captures details of any allocations that were preempted
+	// in order to place this allocation
+	PreemptionTracker *PreemptedAllocsTracker
+
+	// PreemptedByAllocation tracks the alloc ID of the allocation that caused this allocation
+	// to stop running because it got preempted
+	PreemptedByAllocation string
+
 	// Raft Indexes
 	CreateIndex uint64
 	ModifyIndex uint64
@@ -6151,6 +6204,7 @@ func (a *Allocation) copyImpl(job bool) *Allocation {
 	}
 
 	na.RescheduleTracker = a.RescheduleTracker.Copy()
+	na.PreemptionTracker = a.PreemptionTracker.Copy()
 	return na
 }
 
@@ -6660,6 +6714,7 @@ const (
 	EvalTriggerFailedFollowUp    = "failed-follow-up"
 	EvalTriggerMaxPlans          = "max-plan-attempts"
 	EvalTriggerRetryFailedAlloc  = "alloc-failure"
+	EvalTriggerPreemption        = "preempted"
 )
 
 const (
@@ -6882,11 +6937,12 @@ func (e *Evaluation) ShouldBlock() bool {
 // for a given Job
 func (e *Evaluation) MakePlan(j *Job) *Plan {
 	p := &Plan{
-		EvalID:         e.ID,
-		Priority:       e.Priority,
-		Job:            j,
-		NodeUpdate:     make(map[string][]*Allocation),
-		NodeAllocation: make(map[string][]*Allocation),
+		EvalID:          e.ID,
+		Priority:        e.Priority,
+		Job:             j,
+		NodeUpdate:      make(map[string][]*Allocation),
+		NodeAllocation:  make(map[string][]*Allocation),
+		NodePreemptions: make(map[string][]*Allocation),
 	}
 	if j != nil {
 		p.AllAtOnce = j.AllAtOnce
@@ -6999,6 +7055,11 @@ type Plan struct {
 	// deployments. This allows the scheduler to cancel any unneeded deployment
 	// because the job is stopped or the update block is removed.
 	DeploymentUpdates []*DeploymentStatusUpdate
+
+	// NodePreemptions is a map from node id to a set of allocations from other
+	// lower priority jobs that are preempted. Preempted allocations are marked
+	// as evicted.
+	NodePreemptions map[string][]*Allocation
 }
 
 // AppendUpdate marks the allocation for eviction. The clientStatus of the
@@ -7031,6 +7092,27 @@ func (p *Plan) AppendUpdate(alloc *Allocation, desiredStatus, desiredDesc, clien
 	p.NodeUpdate[node] = append(existing, newAlloc)
 }
 
+func (p *Plan) AppendPreemptedAlloc(alloc *Allocation, desiredStatus, preemptingAllocID string) {
+	newAlloc := new(Allocation)
+	*newAlloc = *alloc
+	// Normalize the job
+	newAlloc.Job = nil
+
+	// Strip the resources as it can be rebuilt.
+	newAlloc.Resources = nil
+
+	newAlloc.DesiredStatus = desiredStatus
+	newAlloc.PreemptedByAllocation = preemptingAllocID
+
+	desiredDesc := fmt.Sprintf("Preempted by alloc ID %v", preemptingAllocID)
+	newAlloc.DesiredDescription = desiredDesc
+
+	node := alloc.NodeID
+	// Append this alloc to slice for this node
+	existing := p.NodePreemptions[node]
+	p.NodePreemptions[node] = append(existing, newAlloc)
+}
+
 func (p *Plan) PopUpdate(alloc *Allocation) {
 	existing := p.NodeUpdate[alloc.NodeID]
 	n := len(existing)
@@ -7058,6 +7140,14 @@ func (p *Plan) IsNoOp() bool {
 		len(p.DeploymentUpdates) == 0
 }
 
+// PreemptedAllocs is used to store information about a set of allocations
+// for the same job that get preempted as part of placing allocations for the
+// job in the plan.
+
+// Preempted allocs represents a map from jobid to allocations
+// to be preempted
+type PreemptedAllocs map[*NamespacedID][]*Allocation
+
 // PlanResult is the result of a plan submitted to the leader.
 type PlanResult struct {
 	// NodeUpdate contains all the updates that were committed.
@@ -7071,6 +7161,11 @@ type PlanResult struct {
 
 	// DeploymentUpdates is the set of deployment updates that were committed.
 	DeploymentUpdates []*DeploymentStatusUpdate
+
+	// NodePreemptions is a map from node id to a set of allocations from other
+	// lower priority jobs that are preempted. Preempted allocations are marked
+	// as stopped.
+	NodePreemptions map[string][]*Allocation
 
 	// RefreshIndex is the index the worker should refresh state up to.
 	// This allows all evictions and allocations to be materialized.

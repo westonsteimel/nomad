@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/nomad/helper/uuid"
 	"github.com/hashicorp/nomad/nomad/mock"
 	"github.com/hashicorp/nomad/nomad/structs"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSystemSched_JobRegister(t *testing.T) {
@@ -220,7 +221,7 @@ func TestSystemSched_JobRegister_EphemeralDiskConstraint(t *testing.T) {
 		JobID:       job1.ID,
 		Status:      structs.EvalStatusPending,
 	}
-	noErr(t, h.State.UpsertEvals(h.NextIndex(), []*structs.Evaluation{eval}))
+	noErr(t, h.State.UpsertEvals(h.NextIndex(), []*structs.Evaluation{eval1}))
 
 	// Process the evaluation
 	if err := h1.Process(NewSystemScheduler, eval1); err != nil {
@@ -1582,7 +1583,8 @@ func TestSystemSched_Preemption(t *testing.T) {
 		DiskMB:   10 * 1024,
 		Networks: []*structs.NetworkResource{
 			{
-				MBits: 400,
+				Device: "eth0",
+				MBits:  400,
 			},
 		},
 	}
@@ -1596,28 +1598,66 @@ func TestSystemSched_Preemption(t *testing.T) {
 		MemoryMB: 2048,
 		Networks: []*structs.NetworkResource{
 			{
-				MBits: 400,
+				Device: "eth0",
+				MBits:  400,
 			},
 		},
 	}
 
 	alloc2 := mock.Alloc()
-	alloc2.Job = job1
-	alloc2.JobID = job1.ID
+	alloc2.Job = job2
+	alloc2.JobID = job2.ID
 	alloc2.NodeID = nodes[0].ID
 	alloc2.Name = "my-job[0]"
-	alloc2.TaskGroup = job1.TaskGroups[0].Name
+	alloc2.TaskGroup = job2.TaskGroups[0].Name
 	alloc2.Resources = &structs.Resources{
 		CPU:      1024,
 		MemoryMB: 2048,
 		DiskMB:   5 * 1024,
 		Networks: []*structs.NetworkResource{
 			{
-				MBits: 400,
+				Device: "eth0",
+				MBits:  400,
 			},
 		},
 	}
 	noErr(t, h.State.UpsertAllocs(h.NextIndex(), []*structs.Allocation{alloc1, alloc2}))
+
+	// Create a high priority job and allocs for it
+	// These allocs should not be preempted
+
+	job3 := mock.BatchJob()
+	job3.Type = structs.JobTypeBatch
+	job3.Priority = 100
+	job3.TaskGroups[0].Tasks[0].Resources = &structs.Resources{
+		CPU:      1024,
+		MemoryMB: 2048,
+		Networks: []*structs.NetworkResource{
+			{
+				MBits: 400,
+			},
+		},
+	}
+
+	alloc3 := mock.Alloc()
+	alloc3.Job = job3
+	alloc3.JobID = job3.ID
+	alloc3.NodeID = nodes[0].ID
+	alloc3.Name = "my-job[0]"
+	alloc3.TaskGroup = job3.TaskGroups[0].Name
+	alloc3.Resources = &structs.Resources{
+		CPU:      1024,
+		MemoryMB: 2048,
+		DiskMB:   10 * 1024,
+		Networks: []*structs.NetworkResource{
+			{
+				Device: "eth0",
+				MBits:  400,
+			},
+		},
+	}
+	noErr(t, h.State.UpsertJob(h.NextIndex(), job3))
+	noErr(t, h.State.UpsertAllocs(h.NextIndex(), []*structs.Allocation{alloc3}))
 
 	// Create a system job such that it would need to preempt both allocs to succeed
 	job := mock.SystemJob()
@@ -1664,29 +1704,58 @@ func TestSystemSched_Preemption(t *testing.T) {
 	// Ensure the plan allocated
 	var planned []*structs.Allocation
 	fmt.Println("Planned allocs ")
+	preemptingAllocId := ""
 	for _, allocList := range plan.NodeAllocation {
 		planned = append(planned, allocList...)
 		for _, alloc := range allocList {
 			fmt.Println(alloc.ID, alloc.Job.ID, alloc.NodeID)
-		}
-	}
-
-	fmt.Println("Planned evictions ", len(plan.NodeUpdate))
-	for _, evicts := range plan.NodeUpdate {
-		for _, evictedAlloc := range evicts {
-			fmt.Println(evictedAlloc.ID, evictedAlloc.NodeID, evictedAlloc.DesiredStatus, evictedAlloc.DesiredDescription)
+			if alloc.NodeID == nodes[0].ID {
+				preemptingAllocId = alloc.ID
+			}
 		}
 	}
 
 	// Lookup the allocations by JobID
-	/*ws := memdb.NewWatchSet()
+	ws := memdb.NewWatchSet()
 	out, err := h.State.AllocsByJob(ws, job.Namespace, job.ID, false)
 	noErr(t, err)
 
 	// Ensure all allocations placed
-	if len(out) != 10 {
+	if len(out) != 2 {
 		t.Fatalf("bad: %#v", out)
-	}*/
+	}
+
+	require := require.New(t)
+	// Verify that one node has preempted allocs
+	require.NotNil(plan.NodePreemptions[nodes[0].ID])
+	preemptedAllocs := plan.NodePreemptions[nodes[0].ID]
+
+	// Verify that two jobs have preempted allocs
+	require.Equal(2, len(preemptedAllocs))
+
+	expectedPreemptedJobIDs := []string{job1.ID, job2.ID}
+
+	// We expect job1 and job2 to have one preempted allocation
+	// job3 should not have any allocs preempted
+	for _, alloc := range preemptedAllocs {
+		require.Contains(expectedPreemptedJobIDs, alloc.JobID)
+	}
+	// Look up both the preempted allocs by job ID
+	ws = memdb.NewWatchSet()
+
+	out, err = h.State.AllocsByJob(ws, job1.Namespace, job1.ID, false)
+	noErr(t, err)
+	for _, alloc := range out {
+		require.Equal(structs.AllocDesiredStatusEvict, alloc.DesiredStatus)
+		require.Equal(fmt.Sprintf("Preempted by alloc ID %v", preemptingAllocId), alloc.DesiredDescription)
+	}
+
+	out, err = h.State.AllocsByJob(ws, job2.Namespace, job2.ID, false)
+	noErr(t, err)
+	for _, alloc := range out {
+		require.Equal(structs.AllocDesiredStatusEvict, alloc.DesiredStatus)
+		require.Equal(fmt.Sprintf("Preempted by alloc ID %v", preemptingAllocId), alloc.DesiredDescription)
+	}
 
 	h.AssertEvalStatus(t, structs.EvalStatusComplete)
 }
