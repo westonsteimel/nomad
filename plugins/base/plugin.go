@@ -55,6 +55,10 @@ var MsgpackHandle = func() *codec.MsgpackHandle {
 	h := &codec.MsgpackHandle{}
 	h.RawToString = true
 	h.MapType = reflect.TypeOf(map[string]interface{}(nil))
+
+	// Support "cty" struct field tags in addition to the default "codec" tags.
+	// See https://github.com/zclconf/go-cty/issues/6 for details
+	h.TypeInfos = codec.NewTypeInfos([]string{"cty", "codec"})
 	return h
 }()
 
